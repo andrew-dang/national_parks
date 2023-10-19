@@ -156,12 +156,29 @@ def multiple_table_check(soup, log_level=logging.INFO):
 
     return check
 
-def coordinates_check(park_table):
+def coordinates_check(park_table_row):
     """
     In a given park table, see if coordinates are present.
     """
+    if park_table_row.find('span', class_='geo-inline') != None:
+        logger.info("GPS coordinates may be present in row")
+        check = True
+    else:
+        check = False
 
-    pass
+    return check
+
+def scrape_table_coordinates(park_table_row):
+    logger.info("Attempting to scrape national park coordinates")
+    lat_dms = park_table_row.find('span', class_="latitude").text
+    long_dms = park_table_row.find('span', class_="longitude").text
+
+    # Convert to decimal
+    lat_dec = round(dms2dec(lat_dms), 6)
+    long_dec = round(dms2dec(long_dms), 6)
+
+    return lat_dms, long_dms, lat_dec, long_dec
+
 
 ##################
 ## Find Element ##
@@ -202,14 +219,14 @@ def find_national_park_name_col(park_table, header_element=['th', 'td']):
     """
     name_col = [re.compile('[Nn]ame'), re.compile('[Nn]ational [Pp]arks?'), re.compile('Short name')]
     
-    # # Go through header of table to get column number of name or national park column 
+    # Go through header of table to get column number of name or national park column 
     for col_num, element in enumerate(park_table.find_next('tr').find_all(header_element)):
         if any(regex.match(element.text.strip()) for regex in name_col):
-            logger.info("Found column containing park name")
             park_name_col_index = col_num
+            logger.info(f"Found column containing park name in column {park_name_col_index}")
             break
         else:
-            logger.info("Could not find park name column")
+            # logger.info("Could not find park name column")
             park_name_col_index = 0
     
     return park_name_col_index
@@ -295,16 +312,11 @@ def find_first_data_row(table: bs4.element.Tag):
 
     # Find first row of data
     for row_num, row in enumerate(table.find_all('tr')[1:], start=1):
-        # n_td = len(row.find_all('td'))
-        # n_th = len(row.find_all('th'))
-        
-        # Row length
-        # row_len = n_td + n_th
         row_len = len(row.find_all(['th', 'td']))
-        logger.info(f"Row number: {row_num}    Row length: {row_len}")
+        # logger.info(f"Row number: {row_num}    Row length: {row_len}")
         
         if header_row_len <= row_len:
-            logger.info(f"First row of data found in row {row_num}")
+            # logger.info(f"First row of data found in row {row_num}")
             first_data_row = row_num
             break
 
@@ -335,8 +347,6 @@ def scrape_next_national_park_table(park_table):
     For the given national park table, get the name and URL of each park.
     """
     # Find header element, park name element, and the column number where the park name is in 
-    # header_element = ['td', 'th']
-    # park_name_element = find_park_name_col_element(park_table)
     park_name_element = ['td', 'th']
     park_name_col_index = find_national_park_name_col(park_table)
     first_row_num = find_first_data_row(park_table)
@@ -355,6 +365,12 @@ def scrape_next_national_park_table(park_table):
             logger.info("Row is empty, moving to next row")
             continue
 
+        # Check if coordinates might be in the table
+        if coordinates_check(row):
+            lat_dms, long_dms, lat_dec, long_dec = scrape_table_coordinates(row)
+        else:
+            lat_dms, long_dms, lat_dec, long_dec = None, None, None, None
+
         # skip header row
         nat_park_name_col = row.find_all(park_name_element)[park_name_col_index]
         
@@ -370,7 +386,7 @@ def scrape_next_national_park_table(park_table):
             for item in a:
                 if ".jpg" not in item['href'] and "cite_note" not in item['href']:
                     park_url = item['href']
-                    logger.info(f"{park_url}")
+                    # logger.info(f"{park_url}") # Debugging
                     break
                 else:
                     park_url = None
@@ -378,15 +394,14 @@ def scrape_next_national_park_table(park_table):
         except:
             logger.info(f"No valid url for national park")
             park_url = None
-        # # get park URL 
-        # try:
-        #     a = nat_park_name_col.find_next('a')
-        #     park_url = a['href']
-        # except:
-        #     logger.info(f"No valid url for national park")
-        #     park_url = None
     
-        parks[park_name] = {'url': park_url}
+        parks[park_name] = {
+            'url': park_url,
+            'lat_dms': lat_dms,
+            'long_dms': long_dms, 
+            'lat_dec': lat_dec,
+            'long_dec': long_dec
+            }
     
     return parks
 
@@ -430,7 +445,7 @@ def multiple_table_scrape(soup):
                 logger.info("Found park name column")
                 break
         
-        # If the regex check is True, we can continue scraping
+        # If the regex check is True, we can go to next table
         if regex_check == False:
             continue
         
@@ -442,9 +457,16 @@ def multiple_table_scrape(soup):
                 
         # Scrape park name and url
         for row in table.find_all('tr')[first_data_row:]:
+            
+            # Check if coordinates might be in the table
+            if coordinates_check(row):
+                lat_dms, long_dms, lat_dec, long_dec = scrape_table_coordinates(row)
+            else:
+                lat_dms, long_dms, lat_dec, long_dec = None, None, None, None
+            
             col = row.find_all(['td', 'th'])[park_name_col_index]
             park_name = col.text
-            logger.info(f"Park name: {col.text}")
+            # logger.info(f"Park name: {col.text}")
                 
             # get park URL 
             try:
@@ -453,8 +475,14 @@ def multiple_table_scrape(soup):
                 for item in a:
                     if ".jpg" not in item['href'] and "cite_note" not in item['href']:
                         park_url = item['href']
-                        logger.info(f"Park URL: {park_url}")
-                        parks[park_name] = {'url': park_url}
+                        # logger.info(f"Park URL: {park_url}")
+                        parks[park_name] = {
+                            'url': park_url,
+                            'lat_dms': lat_dms,
+                            'long_dms': long_dms, 
+                            'lat_dec': lat_dec,
+                            'long_dec': long_dec
+                            }
                         break
                     else:
                         park_url = None
@@ -473,13 +501,20 @@ def scrape_coordinates(master_dict):
     for country in master_dict:
         c_dict = master_dict[country]
 
-        # if url is invalid, continue
+        # if country url is invalid, continue
         if c_dict["url"] == None or 'wiki' not in c_dict['url']:
             logger.info(f"{country} does not have a valid URL. Moving to next country")
             continue
-
-
+        
+        # Scrape each park URL 
         for park in c_dict['parks']:
+            # If coordinates for park already exists, continue 
+            if 'lat_dms' in c_dict['parks'][park]:
+                if c_dict['parks'][park]['lat_dms'] != None:
+                    logger.info(f"{park} already has coordinates. Moving to next park.")
+                    continue
+
+            # If park url is invalid, continue
             sub_url = c_dict['parks'][park]['url']
             if sub_url == None or 'wiki' not in sub_url:
                 logger.info(f'Park has invalid URL ({sub_url}). Moving to next park.')
@@ -495,8 +530,8 @@ def scrape_coordinates(master_dict):
                 
                 if lat_dms != None and long_dms != None:
                     logger.info(f"Coordinates for {park}: {lat_dms} {long_dms}. Converting to degree decimal.")
-                    lat_dec = dms2dec(lat_dms)
-                    long_dec = dms2dec(long_dms)
+                    lat_dec = round(dms2dec(lat_dms),6)
+                    long_dec = round(dms2dec(long_dms),6)
                     
                     # Save coordinates to dictionary
                     c_dict['parks'][park]['lat_dms'] = lat_dms
@@ -510,16 +545,12 @@ def scrape_coordinates(master_dict):
                     c_dict['parks'][park]['lat_dec'] = None
                     c_dict['parks'][park]['long_dec'] = None
 
-                # if lat != None:
-                #     coordinates = str(lat) + ' ' + str(long)
-                #     logger.info(f"Coordinates for {park}: {coordinates}")
-
-                #     c_dict['parks'][park]['coordinates'] = coordinates
-                # else:
-                #     c_dict['parks'][park]['coordinates'] = None
             except:
                 logger.info(f"Invalid URL ({park_url}). Moving to next park.")
-                c_dict['parks'][park]['coordinates'] = None
+                c_dict['parks'][park]['lat_dms'] = None
+                c_dict['parks'][park]['long_dms'] = None
+                c_dict['parks'][park]['lat_dec'] = None
+                c_dict['parks'][park]['long_dec'] = None
                 continue
         
         master_dict[country] = c_dict
@@ -542,6 +573,198 @@ def scrape_lone_list(park_list):
 
     pass
 
+
+################
+## Edge Cases ##
+################
+def scrape_edge_case_g2(soup):
+    parks = {}
+    
+    main_container = soup.find(class_='mw-parser-output')
+    
+    ul = main_container.find_all('ul')[0]
+    for li in ul.find_all('li'):
+        park_name = li.text
+
+        # Skip item in list if national parl is not in the name
+        if "National Park" in park_name:
+            logger.info(f"This item {li.text} is a national park.")
+            # Try to get url 
+            try:
+                park_url = li.a['href']
+                logger.info(f'{park_url}')
+            except:
+                logger.info("Could not get URL")
+                park_url = None
+
+    
+            parks[park_name] = {'url': park_url}
+        
+        else:
+            logger.info(f"This item {li.text} is not a national park.")   
+            continue
+
+    
+    return parks
+
+def scrape_edge_case_g3(soup):
+    parks = {}
+    main_container = soup.find(class_='mw-parser-output')
+    
+    for ul in main_container.find_all('ul'):
+        for li in ul.find_all('li'):
+            park_name = li.text
+            # Try to get url 
+            try:
+                park_url = li.a['href']
+                logger.info(f'{park_url}')
+            except:
+                logger.info("Could not get URL")
+                park_url = None
+            
+            parks[park_name] = {'url': park_url}
+    
+    return parks
+
+def scrape_edge_case_g4(soup):
+    parks = {}
+    main_container = soup.find(class_='mw-parser-output')
+    
+    for ul in main_container.find_all('ul'):
+        for li in ul.find_all('li'):
+            park_name = li.text
+
+            # Skip item in list if national parl is not in the name
+            if "National Park" in park_name:
+                logger.info(f"This item {li.text} is a national park.")
+                # Try to get url 
+                try:
+                    park_url = li.a['href']
+                    # logger.info(f'{park_url}') # Debugging
+                except:
+                    logger.info("Could not get URL")
+                    park_url = None
+                
+                parks[park_name] = {'url': park_url}
+
+            else:
+                logger.info(f"This item {li.text} is not a national park.")   
+                continue
+    
+    return parks
+
+def scrape_edge_case_g5(soup):
+    parks = {}
+    main_container = soup.find(class_='mw-parser-output')
+    park_table = main_container.find_next('table', class_='wikitable')
+
+    park_name_element = ['td', 'th']
+    park_name_col_index = find_national_park_name_col(park_table)
+    first_row_num = find_first_data_row(park_table)
+    
+    logger.info(f"Park name is in column {park_name_col_index}")
+
+    # Go through the park table, get the name and url of each park 
+    # Empty dictionary
+    parks = {}
+
+    # Iterate through each row
+    for row in park_table.find_all('tr')[first_row_num:]:
+        
+        # logger.info(f"Debugging: Number of columns in row: {len(row.find_all(park_name_element))}")
+        if len(row.find_all(park_name_element)) == 0:
+            logger.info("Row is empty, moving to next row")
+            continue
+
+        # skip header row
+        nat_park_name_col = row.find_all(park_name_element)[park_name_col_index]
+        
+        # get park name
+        park_name = nat_park_name_col.text
+        
+        # get park URL 
+        try:
+            a = nat_park_name_col.find_all('a')
+            if len(a) == 0:
+                continue
+            # a = row.find_next('a')
+            for item in a:
+                if ".jpg" not in item['href'] and "cite_note" not in item['href']:
+                    park_url = item['href']
+                    # logger.info(f"{park_url}") # Debugging
+                    break
+                else:
+                    park_url = None
+                    continue
+        except:
+            logger.info(f"No valid url for national park")
+            park_url = None
+    
+        parks[park_name] = {'url': park_url}
+    
+    return parks
+
+def scrape_edge_case_g7(soup):
+    # Empty dictionary
+    parks = {}
+
+    # HTML element for header and row contents
+    header_element = ['td', 'th']
+
+    # Get table
+    park_table = soup.find('table', class_='wikitable')
+
+    # Get header contents and length
+    header = park_table.find_next('tr')
+    header_contents = header.find_all(header_element)
+    header_length = len(header_contents)
+
+    # Get index for park name column
+    park_name_col_index = find_national_park_name_col(park_table)
+    
+    # Get index for first row of data
+    first_data_row = find_first_data_row(park_table)
+
+    # iterate through rows of data
+    for row in park_table.find_all('tr')[first_data_row:]:
+        row_length = len(row.find_all(['td', 'th']))
+
+        if row_length == 0:
+            continue
+        
+        if row_length == header_length:
+            park_name_index = park_name_col_index
+        else:
+            park_name_index = park_name_col_index - 1
+            # then park name index is same as what it was in header
+            # else, park name index is header_index - 1
+    
+        col = row.find_all(header_element)[park_name_index]
+        park_name = col.text
+        
+        # get park URL 
+        try:
+            a = col.find_all('a')
+            if len(a) == 0:
+                continue
+            # a = row.find_next('a')
+            for item in a:
+                if ".jpg" not in item['href'] and "cite_note" not in item['href']:
+                    park_url = item['href']
+                    # logger.info(f"{park_url}") # Debugging
+                    break
+                else:
+                    park_url = None
+                    continue
+        except:
+            logger.info(f"No valid url for national park")
+            park_url = None
+    
+        parks[park_name] = {'url': park_url}
+
+    return parks
+
+
 ####################
 ## Create objects ##
 ####################
@@ -555,11 +778,6 @@ def create_master_table(master_dict):
         parks = c_dict['parks']
         for park_name in parks:
             park_dict = parks[park_name]
-            
-            # try:
-            #     park_coordinates = park_dict['coordinates']
-            # except:
-            #     park_coordinates = None
 
             try:
                 lat_dms = park_dict['lat_dms']
@@ -654,14 +872,28 @@ def total_parks(master_dict):
     return num_parks
 
 def num_parks_found(master_dict):
+    """
+    Number of parks with coordinates scraped. Add it to country dictionary.
+    """
+    num_parks_total = 0
+
     for country in master_dict:
         c_dict = master_dict[country]
+        num_parks_country = 0
 
-        num_parks_scraped = len(c_dict['parks'])
-        c_dict['num_parks_scraped'] = num_parks_scraped
+        for park_name in c_dict['parks']:
+            park_dict = c_dict['parks'][park_name]
+            if 'lat_dms' in park_dict:
+                if park_dict['lat_dms'] != None:
+                    num_parks_total += 1
+                    num_parks_country += 1
+                else: 
+                    logger.info(f"{park_name} does not have coordinates")
+
+        c_dict['num_parks_scraped'] = num_parks_country
         master_dict[country] = c_dict
 
-    return master_dict
+    return master_dict, num_parks_total
 
 def num_parks_missing_country_url(master_dict: dict, missing_url_ls: list):
     total_num_parks = total_parks(master_dict)
@@ -683,26 +915,6 @@ def num_parks_missing_park_url(master_dict: dict):
     pct_scraped = round(num_parks_missing/total_num_parks * 100,2)
     logger.info(f'{pct_scraped}% ({num_parks_missing}/{total_num_parks}) of parks are missing due to missing or invalid URLs for the national park.')
 
-"""
-def find_invalid_or_missing_park_url(master_dict):
-    problem_list = []
-    for country in master_dict:
-        c_dict = master_dict[country]
-
-        # Get park url
-        parks_dict = c_dict['parks']
-        for park_name in parks_dict:
-            park_url = parks_dict[park_name]['url']
-        
-
-            if park_url == None or 'wiki' not in park_url:
-                problem_list.append(country)
-    
-    return problem_list
-"""
-
-
-
 def country_completion_check(master_dict, high: float, low:float):
     # Empty lists to keep track of data quality
     incomplete_countries = []
@@ -714,12 +926,13 @@ def country_completion_check(master_dict, high: float, low:float):
     for country in master_dict:
         c_dict = master_dict[country]
         
+        # Get number of parks in the country that have coordinates
         try:
             if c_dict['number_of_parks'] != None:
                 num_parks = int(c_dict['number_of_parks'])
                 num_scraped = c_dict['num_parks_scraped']
                 pct_scraped = round(num_scraped/num_parks * 100, 2)
-                logger.info(f"{pct_scraped}% ({num_scraped}/{num_parks}) of national parks in {country} were scraped.")
+                logger.info(f"{pct_scraped}% ({num_scraped}/{num_parks}) of national parks in {country} were scraped and have coordinates.")
                 
                 if pct_scraped != 100.0:
                     incomplete_countries.append(country)
@@ -729,16 +942,9 @@ def country_completion_check(master_dict, high: float, low:float):
 
                 if pct_scraped > high:
                     too_many_scraped.append(country)
-                else:
-                    if country not in potentially_complete_countries:
-                        potentially_complete_countries.append(country)
-                
+     
                 if pct_scraped < low:
                     not_enough_scraped.append(country)
-                else:
-                    if country not in potentially_complete_countries:
-                        potentially_complete_countries.append(country)
-
 
         except:
             logger.info(f"Error with calculating scrape percentage for {country}")
@@ -750,22 +956,11 @@ def country_completion_check(master_dict, high: float, low:float):
 
 def completion_check(df, master_dict):
     num_parks = total_parks(master_dict)
+    df = df[~df['lat_dms'].isna()]
     num_parks_scraped = df.shape[0]
 
     pct_complete = round(num_parks_scraped/num_parks * 100,2)
     logger.info(f"{pct_complete}% ({num_parks_scraped}/{num_parks}) of available parks have been scraped.")
-
-    # # Number of parks that are invalid
-    # missing_parks_list = find_missing_parks(master_dict)
-
-    # num_missing_parks = 0
-    # for country in missing_parks_list:
-    #     c_dict = master_dict[country]
-    #     if c_dict['number_of_parks'] != None:
-    #         num_missing_parks += int(c_dict['number_of_parks'])
-
-    # pct_missing = round(num_missing_parks/num_parks * 100,2)
-    # logger.info(f"{pct_missing}% of parks are missing.")
 
     # Number of parks we couldn't find because of bad country URLs
     bad_urls = find_invalid_or_missing_country_url(master_dict)
@@ -832,13 +1027,6 @@ def create_master_dict(soup, country_names: list):
             country_dict = {}
             for i, col in enumerate(row.find_all('td')):
                 if i == 0 and col.text in country_names:
-                    # for a in col.find_all('a'):
-                    #     country = col.text
-                    #     country_dict['url'] = None
-                    #     # if "wiki" in a['href']:
-                    #     url = a['href']
-                    #     url_list.append(a['href'])
-                    #     country_dict['url'] = url
                     country = col.text
                     a = col.find_next('a')
                     url = a['href']
@@ -850,7 +1038,7 @@ def create_master_dict(soup, country_names: list):
                     num_parks = col.text
                     # Replace empty string with None
                     if num_parks == '':
-                        num_parks = None
+                        num_parks = str(0)
                     country_dict['number_of_parks'] = num_parks
                 
                 if country not in master_dict:
@@ -858,77 +1046,30 @@ def create_master_dict(soup, country_names: list):
     
     return master_dict 
 
-def scrape_edge_case_g2(soup):
-    parks = {}
+def create_summary_df(master_dict: dict) -> pd.DataFrame:
+    headers = ['country', 'number_of_parks_listed', 'number_of_parks_scraped']
+    table_data = []
     
-    main_container = soup.find(class_='mw-parser-output')
-    
-    ul = main_container.find_all('ul')[0]
-    for li in ul.find_all('li'):
-        park_name = li.text
+    for country in master_dict:
+        row_data = []
+        c_dict = master_dict[country]
 
-        # Skip item in list if national parl is not in the name
-        if "National Park" in park_name:
-            logger.info(f"This item {li.text} is a national park.")
-            # Try to get url 
-            try:
-                park_url = li.a['href']
-                logger.info(f'{park_url}')
-            except:
-                logger.info("Could not get URL")
-                park_url = None
-
-    
-            parks[park_name] = {'url': park_url}
+        number_of_parks = c_dict['number_of_parks']
+        num_scraped = c_dict['num_parks_scraped']
         
-        else:
-            logger.info(f"This item {li.text} is not a national park.")   
-            continue
+        row_data.append(country)
+        row_data.append(number_of_parks)
+        row_data.append(num_scraped)
+        table_data.append(row_data)
+        
+    df = pd.DataFrame(table_data, columns=headers)
     
-        # # Try to get url 
-        # try:
-        #     park_url = li.a['href']
-        # except:
-        #     park_url = None
-
-        #     parks[park_name] = {'url': park_url}
+    # Clean country names
+    clean_country_name_lambda = lambda x: clean_country_name(x)
+    df["country"] = df["country"].apply(clean_country_name_lambda)
     
-    return parks
+    return df
 
-def scrape_edge_case_g4(soup):
-    parks = {}
-    main_container = soup.find(class_='mw-parser-output')
-    
-    for ul in main_container.find_all('ul'):
-        for li in ul.find_all('li'):
-            park_name = li.text
-
-            # Skip item in list if national parl is not in the name
-            if "National Park" in park_name:
-                logger.info(f"This item {li.text} is a national park.")
-                # Try to get url 
-                try:
-                    park_url = li.a['href']
-                    logger.info(f'{park_url}')
-                except:
-                    logger.info("Could not get URL")
-                    park_url = None
-                
-                parks[park_name] = {'url': park_url}
-
-            else:
-                logger.info(f"This item {li.text} is not a national park.")   
-                continue
-            
-            # # Try to get url 
-            # try:
-            #     park_url = li.a['href']
-            # except:
-            #     park_url = None
-
-            # parks[park_name] = {'url': park_url}
-    
-    return parks
 
 def get_park_names_and_urls(url):
     master_soup = create_soup(url)
@@ -936,7 +1077,7 @@ def get_park_names_and_urls(url):
     master_dict = create_master_dict(master_soup, country_names)
 
     # Edge case where there is a "National Park" ID in a header, but there are multiple tables on the page
-    edge_cases_g1 = ['Greece', 'Thailand', 'Italy']
+    edge_cases_g1 = ['Greece', 'Thailand', 'Italy', "People's Republic of China"]
     # No header, there is an unordered list, but its all protected areas - look for just 'National Park'
     edge_cases_g2 = ['Nicaragua', 'United Arab Emirates', 'Saudi Arabia', 'Oman', 'Afghanistan', 'Bhutan', 'Guyana']
     # Edge case where there is a "National Park" ID in a header, but there are multiple lists on the page
@@ -947,8 +1088,12 @@ def get_park_names_and_urls(url):
     edge_cases_g5 = ['South Africa', 'Poland']
     # Multiple countries on the webpage, but parks are organized in table instead of list
     edge_cases_g6 = ['Estonia', 'Latvia', 'Lithuania']
+    # Weird table structure - first column consists of merged cells which throws off park_name_col_index
+    edge_cases_g7 = ['Vietnam']
 
-    counter = 0
+    # DEBUG
+    # counter = 0
+
     for country in master_dict:
         c_dict = master_dict[country]
         logger.info('----------------------------------------------------------------------------------------------------------------')
@@ -976,28 +1121,35 @@ def get_park_names_and_urls(url):
             
         #   Else, if we can find a header with an ID containing "National park":
             if check_national_park_id(soup, country):
-                nat_park_id = find_national_park_id(soup)
-                logger.info(f"A header with an ID containing national park has been found for {country}. Looking for the next table or list...")
-        #       If there is a table directly after the National park header:
-                if check_next_national_park_table(nat_park_id):
-                    if country in edge_cases_g1:
-                        logger.info(f"{country} is an edge case (Group 1). Scraping logic changing accordingly")
-                        parks = multiple_table_scrape(soup)
-                    # Get park name and URLs from the table 
-                    else:
-                        park_table = find_next_national_park_table(nat_park_id)
-                        logger.info(f"A national park table for {country} directly after the 'National Park' header has been found. Getting park names and URLs.")
-                        parks = scrape_next_national_park_table(park_table)
-        #       Else, if there is a list directly after the National park list: 
-                elif check_next_national_park_list(nat_park_id):
-                    logger.info(f"No table was found. An unordered list was found instead.")
-                    if country in edge_cases_g4:
-                        logger.info(f"{country} is an edge case (Group 4). Scraping logic changing accordingly")
-                        parks = scrape_edge_case_g4(soup)
-        #           Get park name and URLs from the list
-                    else:
-                        park_list = find_next_national_park_list(nat_park_id)
-                        parks = scrape_next_national_park_list(park_list)
+                if country in edge_cases_g5:
+                    logger.info(f"{country} is an edge case (Group 5). Scraping logic changing accordingly")
+                    parks = scrape_edge_case_g5(soup)
+                else:
+                    nat_park_id = find_national_park_id(soup)
+                    logger.info(f"A header with an ID containing national park has been found for {country}. Looking for the next table or list...")
+        #           If there is a table directly after the National park header:
+                    if check_next_national_park_table(nat_park_id):
+                        if country in edge_cases_g1:
+                            logger.info(f"{country} is an edge case (Group 1). Scraping logic changing accordingly")
+                            parks = multiple_table_scrape(soup)
+                        # Get park name and URLs from the table 
+                        else:
+                            park_table = find_next_national_park_table(nat_park_id)
+                            logger.info(f"A national park table for {country} directly after the 'National Park' header has been found. Getting park names and URLs.")
+                            parks = scrape_next_national_park_table(park_table)
+        #           Else, if there is a list directly after the National park list: 
+                    elif check_next_national_park_list(nat_park_id):
+                        logger.info(f"No table was found. An unordered list was found instead.")
+                        if country in edge_cases_g4:
+                            logger.info(f"{country} is an edge case (Group 4). Scraping logic changing accordingly")
+                            parks = scrape_edge_case_g4(soup)
+                        elif country in edge_cases_g3:
+                            logger.info(f"{country} is an edge case (Group 3). Scraping logic changing accordingly")
+                            parks = scrape_edge_case_g3(soup)
+            #           Get park name and URLs from the list
+                        else:
+                            park_list = find_next_national_park_list(nat_park_id)
+                            parks = scrape_next_national_park_list(park_list)
         #       Else, there is no header with an ID containing "National park" and if we can find a table:
             else:
                 logger.info(f"No header with an ID containing national park was found for {country}. Looking for any table in webpage...")
@@ -1041,31 +1193,41 @@ def get_park_names_and_urls(url):
         
         # Else, if there is more than one park, if we can find a header with an ID containing "National park":
         elif check_national_park_id(soup, country):
-            logger.info(f"Second elif block for {country}...")
-            nat_park_id = find_national_park_id(soup)
-            logger.info(f"{country} has more than one national park. A header with an ID containing national park has been found for {country}. Looking for the next table or list.")
-            # logger.info(f"DEBUGGING: Still on same loop iteration for {country}")
-        #   If there is a table directly after the National park header:
-            if check_next_national_park_table(nat_park_id, country):
-                if country in edge_cases_g1:
-                        logger.info(f"{country} is an edge case. Scraping logic changing accordingly")
-                        parks = multiple_table_scrape(soup)
-        # Get park name and URLs from the table 
-                else:
-                    park_table = find_next_national_park_table(nat_park_id)
-                    logger.info(f'A national park table for {country} has been found. Getting park names and URLs.')
-                    parks = scrape_next_national_park_table(park_table)
-        #       Else, if there is a list directly after the National park list: 
-            elif check_next_national_park_list(nat_park_id, country):
-                    if country in edge_cases_g4:
-                        logger.info(f"{country} is an edge case (Group 4). Scraping logic changing accordingly")
-                        parks = scrape_edge_case_g4(soup)
-                    # Get park names and URLs from the list 
-                    else:
-                        park_list = find_next_national_park_list(soup)
-                        parks = scrape_next_national_park_list(nat_park_id)
+            if country in edge_cases_g5:
+                logger.info(f"{country} is an edge case (Group 5). Scraping logic changing accordingly")
+                parks = scrape_edge_case_g5(soup)
+            elif country in edge_cases_g7:
+                logger.info(f"{country} is an edge case (Group 7). Scraping logic changing accordingly")
+                parks = scrape_edge_case_g7(soup)
             else:
-                parks = {}
+                logger.info(f"Second elif block for {country}...")
+                nat_park_id = find_national_park_id(soup)
+                logger.info(f"{country} has more than one national park. A header with an ID containing national park has been found for {country}. Looking for the next table or list.")
+                # logger.info(f"DEBUGGING: Still on same loop iteration for {country}")
+            #   If there is a table directly after the National park header:
+                if check_next_national_park_table(nat_park_id, country):
+                    if country in edge_cases_g1:
+                            logger.info(f"{country} is an edge case. Scraping logic changing accordingly")
+                            parks = multiple_table_scrape(soup)
+            # Get park name and URLs from the table 
+                    else:
+                        park_table = find_next_national_park_table(nat_park_id)
+                        logger.info(f'A national park table for {country} has been found. Getting park names and URLs.')
+                        parks = scrape_next_national_park_table(park_table)
+            #       Else, if there is a list directly after the National park list: 
+                elif check_next_national_park_list(nat_park_id, country):
+                        if country in edge_cases_g4:
+                            logger.info(f"{country} is an edge case (Group 4). Scraping logic changing accordingly")
+                            parks = scrape_edge_case_g4(soup)
+                        elif country in edge_cases_g3:
+                            logger.info(f"{country} is an edge case (Group 3). Scraping logic changing accordingly")
+                            parks = scrape_edge_case_g3(soup)
+                        # Get park names and URLs from the list 
+                        else:
+                            park_list = find_next_national_park_list(nat_park_id)
+                            parks = scrape_next_national_park_list(park_list)
+                else:
+                    parks = {}
         # Else, if there is no "National park" ID:
         else:
             logger.info(f"Last else block for {country}...")
@@ -1149,7 +1311,8 @@ def main(url):
     df["country"] = df["country"].apply(clean_country_name_lambda)
 
     # Add num_parks_scraped to master_dict
-    num_parks_found(master_dict)
+    master_dict, num_parks_total = num_parks_found(master_dict)
+    logger.info(f"{num_parks_total} parks with coordinates have been found.")
     
     # completion checks
     incomplete_countries, potentially_complete_countries, too_many_scraped, not_enough_scraped, error_list = country_completion_check(master_dict, 105, 50)
@@ -1170,10 +1333,10 @@ def main(url):
 
     # Write dataframes to file
     df_final = df[~df['lat_dms'].isna()]
-    df_final.to_csv("final.csv", encoding='utf-8-sig')
+    df_final.to_csv("final.csv", encoding='utf-8-sig', index=False)
 
     df_missing = df[df['lat_dms'].isna()]
-    df_missing.to_csv("missing_coordinates.csv", encoding='utf-8-sig')
+    df_missing.to_csv("missing_coordinates.csv", encoding='utf-8-sig', index=False)
     
     return master_dict, df, check_dict
     
@@ -1197,9 +1360,14 @@ def clean_park_name(park_name):
     park_name = re.sub("\*", "", park_name) # remove asterisks
     park_name = re.sub("^Source [0-9]: ", "", park_name) # Edge case
     park_name = re.sub("Εθνικός.+", "", park_name) # Remove specific non-English characters
-    park_name = re.sub("[가-힣].+", "", park_name) # Remove Korean characters
-    park_name = park_name.strip() # Remove leading and trailing whitespaces
+    park_name = re.sub("Εθνικό.+", "", park_name) # Remove specific non-English characters
+    park_name = re.sub("[가-힣].+", "", park_name) # Remove Korean characters00
     park_name = re.sub("\.\s[0-9].+", " ", park_name) # Edge case, period followed by date and area (size)
+    park_name = re.sub(' in .+', "", park_name) # Removing text that provides regional context about national park
+    park_name = re.sub('\. Lagoon .+', "", park_name) # Special case for Uruguay
+    park_name = re.sub('\. Semi-freshwater .+', "", park_name) # Special case for Uruguay
+    park_name = re.sub('\. Includes .+', "", park_name) # Special case for Uruguay
+    park_name = park_name.strip() # Remove leading and trailing whitespaces
     
     return park_name
 
