@@ -226,7 +226,7 @@ def find_national_park_name_col(park_table, header_element=['th', 'td']):
             logger.info(f"Found column containing park name in column {park_name_col_index}")
             break
         else:
-            # logger.info("Could not find park name column")
+            logger.info(f"Could not find park name column in column number {col_num}")
             park_name_col_index = 0
     
     return park_name_col_index
@@ -308,7 +308,7 @@ def find_first_data_row(table: bs4.element.Tag):
 
     # Len of header 
     header_row_len = len(header_row_contents)
-    logger.info(f"Header row length: {header_row_len}")
+    # logger.info(f"Header row length: {header_row_len}")
 
     # Find first row of data
     for row_num, row in enumerate(table.find_all('tr')[1:], start=1):
@@ -442,7 +442,7 @@ def multiple_table_scrape(soup):
             regex_check = False
             if any(regex.match(content.text.strip()) for regex in name_col):
                 regex_check = True
-                logger.info("Found park name column")
+                # logger.info("Found park name column")
                 break
         
         # If the regex check is True, we can go to next table
@@ -486,7 +486,7 @@ def multiple_table_scrape(soup):
                         break
                     else:
                         park_url = None
-                        logger.info(f"Park URL: {park_url}")
+                        # logger.info(f"Park URL: {park_url}")
                         continue
             except:
                 logger.info(f"No valid url for national park")
@@ -592,7 +592,7 @@ def scrape_edge_case_g2(soup):
             # Try to get url 
             try:
                 park_url = li.a['href']
-                logger.info(f'{park_url}')
+                # logger.info(f'{park_url}')
             except:
                 logger.info("Could not get URL")
                 park_url = None
@@ -617,7 +617,7 @@ def scrape_edge_case_g3(soup):
             # Try to get url 
             try:
                 park_url = li.a['href']
-                logger.info(f'{park_url}')
+                # logger.info(f'{park_url}')
             except:
                 logger.info("Could not get URL")
                 park_url = None
@@ -636,7 +636,7 @@ def scrape_edge_case_g4(soup):
 
             # Skip item in list if national parl is not in the name
             if "National Park" in park_name:
-                logger.info(f"This item {li.text} is a national park.")
+                # logger.info(f"This item {li.text} is a national park.")
                 # Try to get url 
                 try:
                     park_url = li.a['href']
@@ -662,7 +662,7 @@ def scrape_edge_case_g5(soup):
     park_name_col_index = find_national_park_name_col(park_table)
     first_row_num = find_first_data_row(park_table)
     
-    logger.info(f"Park name is in column {park_name_col_index}")
+    # logger.info(f"Park name is in column {park_name_col_index}")
 
     # Go through the park table, get the name and url of each park 
     # Empty dictionary
@@ -1314,6 +1314,10 @@ def main(url):
     master_dict, num_parks_total = num_parks_found(master_dict)
     logger.info(f"{num_parks_total} parks with coordinates have been found.")
     
+    # Create a summary table
+    df_summary = create_summary_df(master_dict)
+    df_summary['country'] = df_summary['country'].apply(clean_country_name_lambda)
+
     # completion checks
     incomplete_countries, potentially_complete_countries, too_many_scraped, not_enough_scraped, error_list = country_completion_check(master_dict, 105, 50)
     completion_check(df, master_dict)
@@ -1333,10 +1337,12 @@ def main(url):
 
     # Write dataframes to file
     df_final = df[~df['lat_dms'].isna()]
-    df_final.to_csv("final.csv", encoding='utf-8-sig', index=False)
+    df_final.to_csv("data/national_parks.csv", encoding='utf-8-sig', index=False)
 
     df_missing = df[df['lat_dms'].isna()]
-    df_missing.to_csv("missing_coordinates.csv", encoding='utf-8-sig', index=False)
+    df_missing.to_csv("data/missing_coordinates.csv", encoding='utf-8-sig', index=False)
+
+    df_summary.to_csv("data/summary_table.csv", encoding='utf-8-sig', index=False)
     
     return master_dict, df, check_dict
     
@@ -1359,9 +1365,9 @@ def clean_park_name(park_name):
     park_name = re.sub("‡|†", "", park_name) # remove dagger characters
     park_name = re.sub("\*", "", park_name) # remove asterisks
     park_name = re.sub("^Source [0-9]: ", "", park_name) # Edge case
-    park_name = re.sub("Εθνικός.+", "", park_name) # Remove specific non-English characters
-    park_name = re.sub("Εθνικό.+", "", park_name) # Remove specific non-English characters
-    park_name = re.sub("[가-힣].+", "", park_name) # Remove Korean characters00
+    park_name = re.sub("Εθνικός.+", "", park_name) # Remove specific Greek characters
+    park_name = re.sub("Εθνικό.+", "", park_name) # Remove specific Greek characters
+    park_name = re.sub("[가-힣].+", "", park_name) # Remove Korean characters
     park_name = re.sub("\.\s[0-9].+", " ", park_name) # Edge case, period followed by date and area (size)
     park_name = re.sub(' in .+', "", park_name) # Removing text that provides regional context about national park
     park_name = re.sub('\. Lagoon .+', "", park_name) # Special case for Uruguay
